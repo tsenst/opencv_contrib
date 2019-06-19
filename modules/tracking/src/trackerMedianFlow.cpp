@@ -42,6 +42,7 @@
 #include "precomp.hpp"
 #include "opencv2/video/tracking.hpp"
 #include "opencv2/imgproc.hpp"
+#include "../../optflow/include/opencv2/optflow/rlofflow.hpp"
 #include "tracking_utils.hpp"
 #include <algorithm>
 #include <limits.h>
@@ -88,6 +89,7 @@ private:
     void computeStatistics(std::vector<float>& data,int size=-1);
 #endif
     void check_FB(const std::vector<Mat>& oldImagePyr,const std::vector<Mat>& newImagePyr,
+                  const cv::Mat &oldImage, const cv::Mat &newImage,
                   const std::vector<Point2f>& oldPoints,const std::vector<Point2f>& newPoints,std::vector<bool>& status);
     void check_NCC(const Mat& oldImage,const Mat& newImage,
                    const std::vector<Point2f>& oldPoints,const std::vector<Point2f>& newPoints,std::vector<bool>& status);
@@ -224,11 +226,17 @@ bool TrackerMedianFlowImpl::medianFlowImpl(Mat oldImage,Mat newImage,Rect2d& old
     buildOpticalFlowPyramid(oldImage_gray, oldImagePyr, params.winSize, params.maxLevel, false);
 
     std::vector<Mat> newImagePyr;
-    buildOpticalFlowPyramid(newImage_gray, newImagePyr, params.winSize, params.maxLevel, false);
+    if (params.useRLOF == true)
+    {
+        buildOpticalFlowPyramid(newImage_gray, newImagePyr, params.winSize, params.maxLevel, false);
 
-    calcOpticalFlowPyrLK(oldImagePyr,newImagePyr,pointsToTrackOld,pointsToTrackNew,status,errors,
-                         params.winSize, params.maxLevel, params.termCriteria, 0);
-
+        calcOpticalFlowPyrLK(oldImagePyr, newImagePyr, pointsToTrackOld, pointsToTrackNew, status, errors,
+                             params.winSize, params.maxLevel, params.termCriteria, 0);
+    }
+    else
+    {
+     cv::optflow::calcOpticalFlowSparseRLOF(oldImage,newImage,pointsToTrackOld,pointsToTrackNew, status,errors );
+    }
     CV_Assert(pointsToTrackNew.size() == pointsToTrackOld.size());
     CV_Assert(status.size() == pointsToTrackOld.size());
     dprintf(("\t%d after LK forward\n",(int)pointsToTrackOld.size()));
@@ -247,7 +255,7 @@ bool TrackerMedianFlowImpl::medianFlowImpl(Mat oldImage,Mat newImage,Rect2d& old
     dprintf(("\t%d after LK forward after removing points with bad status\n",(int)pointsToTrackOld.size()));
 
     std::vector<bool> filter_status(pointsToTrackOld.size(), true);
-    check_FB(oldImagePyr, newImagePyr, pointsToTrackOld, pointsToTrackNew, filter_status);
+    check_FB(oldImagePyr, newImagePyr, oldImage,newImage, pointsToTrackOld, pointsToTrackNew, filter_status);
     check_NCC(oldImage_gray, newImage_gray, pointsToTrackOld, pointsToTrackNew, filter_status);
 
     // filter
@@ -350,6 +358,7 @@ void TrackerMedianFlowImpl::computeStatistics(std::vector<float>& data,int size)
 }
 #endif
 void TrackerMedianFlowImpl::check_FB(const std::vector<Mat>& oldImagePyr, const std::vector<Mat>& newImagePyr,
+                                     const cv::Mat &oldImage, const cv::Mat &newImage,
                                      const std::vector<Point2f>& oldPoints, const std::vector<Point2f>& newPoints, std::vector<bool>& status){
 
     if(status.empty()) {
@@ -360,8 +369,16 @@ void TrackerMedianFlowImpl::check_FB(const std::vector<Mat>& oldImagePyr, const 
     std::vector<float> errors(oldPoints.size());
     std::vector<float> FBerror(oldPoints.size());
     std::vector<Point2f> pointsToTrackReprojection;
-    calcOpticalFlowPyrLK(newImagePyr, oldImagePyr,newPoints,pointsToTrackReprojection,LKstatus,errors,
-                         params.winSize, params.maxLevel, params.termCriteria, 0);
+    if (params.useRLOF == true)
+    {
+        calcOpticalFlowPyrLK(newImagePyr, oldImagePyr,newPoints,pointsToTrackReprojection,LKstatus,errors,
+                             params.winSize, params.maxLevel, params.termCriteria, 0);
+    }
+    else
+    {
+        optflow::calcOpticalFlowSparseRLOF(oldImage,newImage,newPoints,pointsToTrackReprojection, LKstatus,errors);
+    }
+
 
     for(size_t i=0;i<oldPoints.size();i++){
         FBerror[i]=(float)norm(oldPoints[i]-pointsToTrackReprojection[i]);
@@ -402,6 +419,7 @@ TrackerMedianFlow::Params::Params() {
     pointsInGrid=10;
     winSize = Size(3,3);
     maxLevel = 5;
+    useRLOF = false;
     termCriteria = TermCriteria(TermCriteria::COUNT|TermCriteria::EPS,20,0.3);
     winSizeNCC = Size(30,30);
     maxMedianLengthOfDisplacementDifference = 10;
@@ -430,6 +448,12 @@ void TrackerMedianFlow::Params::read( const cv::FileNode& fn ){
 
     if(!fn["termCriteria_epsilon"].empty())
         fn["termCriteria_epsilon"] >> termCriteria.epsilon;
+    if(!fn["useRLOF"].empty())
+    {
+        int temp = 0;
+        fn["useRLOF"] >> temp;
+        useRLOF = temp;
+    }
 }
 
 void TrackerMedianFlow::Params::write( cv::FileStorage& fs ) const{
@@ -440,6 +464,7 @@ void TrackerMedianFlow::Params::write( cv::FileStorage& fs ) const{
     fs << "termCriteria_epsilon" << termCriteria.epsilon;
     fs << "winSizeNCC" << winSizeNCC;
     fs << "maxMedianLengthOfDisplacementDifference" << maxMedianLengthOfDisplacementDifference;
+    fs << "useRLOF" << (int)(useRLOF);
 }
 
 Ptr<TrackerMedianFlow> TrackerMedianFlow::create(const TrackerMedianFlow::Params &parameters){

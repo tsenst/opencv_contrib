@@ -433,9 +433,16 @@ PARAM_TEST_CASE(DistanceAndOverlap, string)
 
 TEST_P(DistanceAndOverlap, MedianFlow)
 {
-  TrackerTest test( TrackerMedianFlow::create(), dataset, 35, .5f, NoTransform, 1, 1);
+ TrackerTest test( TrackerMedianFlow::create(), dataset, 35, .5f, NoTransform, 1, 1);
   test.run();
+  TrackerMedianFlow::Params param;
+  param.useRLOF = true;
+  cv::Ptr<TrackerMedianFlow> tracker = TrackerMedianFlow::create(param);
+  TrackerTest test2(tracker , dataset, 35, .5f, NoTransform, 1, 1);
+  test2.run();
 }
+
+
 
 TEST_P(DistanceAndOverlap, MIL)
 {

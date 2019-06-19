@@ -1150,6 +1150,7 @@ class CV_EXPORTS_W TrackerMedianFlow : public Tracker
                            //!<accurateness for speed
     cv::Size winSize;      //!<window size parameter for Lucas-Kanade optical flow
     int maxLevel;          //!<maximal pyramid level number for Lucas-Kanade optical flow
+    bool useRLOF;
     TermCriteria termCriteria; //!<termination criteria for Lucas-Kanade optical flow
     cv::Size winSizeNCC;   //!<window size around a point for normalized cross-correlation check
     double maxMedianLengthOfDisplacementDifference; //!<criterion for loosing the tracked object
