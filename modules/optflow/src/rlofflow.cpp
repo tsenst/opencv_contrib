@@ -6,6 +6,7 @@
 #include "rlof/geo_interpolation.hpp"
 #include "opencv2/ximgproc.hpp"
 
+
 namespace cv {
 namespace optflow {
 
@@ -14,6 +15,19 @@ Ptr<RLOFOpticalFlowParameter> RLOFOpticalFlowParameter::create()
     return Ptr<RLOFOpticalFlowParameter>(new RLOFOpticalFlowParameter);
 }
 
+void RLOFOpticalFlowParameter::setUseMEstimator(bool val)
+{
+    if (val)
+    {
+        normSigma0 = 3.2f;
+        normSigma1 = 7.f;
+    }
+    else
+    {
+        normSigma0 = std::numeric_limits<float>::max();
+        normSigma1 = std::numeric_limits<float>::max();
+    }
+}
 void RLOFOpticalFlowParameter::setSolverType(SolverType val){ solverType = val;}
 SolverType RLOFOpticalFlowParameter::getSolverType() const { return solverType;}
 
@@ -189,7 +203,11 @@ public:
             filtered_prevPoints = prevPoints;
             filtered_currPoints = currPoints;
         }
-
+        // Interpolators below expect non empty matches
+        if (filtered_prevPoints.empty()) {
+            flow.setTo(0);
+            return;
+        }
         if (interp_type == InterpolationType::INTERP_EPIC)
         {
             Ptr<ximgproc::EdgeAwareInterpolator> gd = ximgproc::createEdgeAwareInterpolator();
@@ -198,7 +216,7 @@ public:
             gd->setLambda(lambda);
             gd->setFGSLambda(fgs_lambda);
             gd->setFGSSigma(fgs_sigma);
-            gd->setUsePostProcessing(false);
+            gd->setUsePostProcessing(use_post_proc);
             gd->interpolate(prevImage, filtered_prevPoints, currImage, filtered_currPoints, dense_flow);
         }
         else if (interp_type == InterpolationType::INTERP_RIC)
@@ -209,7 +227,7 @@ public:
             gd->setFGSSigma(fgs_sigma);
             gd->setSuperpixelSize(sp_size);
             gd->setSuperpixelMode(slic_type);
-            gd->setUseGlobalSmootherFilter(false);
+            gd->setUseGlobalSmootherFilter(use_post_proc);
             gd->setUseVariationalRefinement(false);
             gd->interpolate(prevImage, filtered_prevPoints, currImage, filtered_currPoints, dense_flow);
         }
@@ -225,6 +243,10 @@ public:
             cv::bilateralFilter(vecMats[0], vecMats2[0], 5, 2, 20);
             cv::bilateralFilter(vecMats[1], vecMats2[1], 5, 2, 20);
             cv::merge(vecMats2, dense_flow);
+            if (use_post_proc)
+            {
+                ximgproc::fastGlobalSmootherFilter(prevImage, flow, flow, fgs_lambda, fgs_sigma);
+            }
         }
         if (use_variational_refinement)
         {
@@ -234,10 +256,6 @@ public:
             cvtColor(currImage, currGrey, COLOR_BGR2GRAY);
             variationalrefine->setOmega(1.9f);
             variationalrefine->calc(prevGrey, currGrey, flow);
-        }
-        if (use_post_proc)
-        {
-            ximgproc::fastGlobalSmootherFilter(prevImage, flow, flow, fgs_lambda, fgs_sigma);
         }
     }
 

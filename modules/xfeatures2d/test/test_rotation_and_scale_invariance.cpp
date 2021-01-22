@@ -20,23 +20,19 @@ INSTANTIATE_TEST_CASE_P(SURF, DetectorRotationInvariance, Values(
     make_tuple(IMAGE_TSUKUBA, SURF::create(), 0.40f, 0.76f)
 ));
 
-INSTANTIATE_TEST_CASE_P(SIFT, DetectorRotationInvariance, Values(
-    make_tuple(IMAGE_TSUKUBA, SIFT::create(), 0.45f, 0.70f)
-));
-
 INSTANTIATE_TEST_CASE_P(SURF, DescriptorRotationInvariance, Values(
     make_tuple(IMAGE_TSUKUBA, SURF::create(), SURF::create(), 0.83f)
 ));
 
-INSTANTIATE_TEST_CASE_P(SIFT, DescriptorRotationInvariance, Values(
-    make_tuple(IMAGE_TSUKUBA, SIFT::create(), SIFT::create(), 0.98f)
-));
+#endif // NONFREE
 
 INSTANTIATE_TEST_CASE_P(LATCH, DescriptorRotationInvariance, Values(
     make_tuple(IMAGE_TSUKUBA, SIFT::create(), LATCH::create(), 0.98f)
 ));
 
-#endif // NONFREE
+INSTANTIATE_TEST_CASE_P(BEBLID, DescriptorRotationInvariance, Values(
+    make_tuple(IMAGE_TSUKUBA, SIFT::create(), BEBLID::create(6.75), 0.98f)
+));
 
 INSTANTIATE_TEST_CASE_P(DAISY, DescriptorRotationInvariance, Values(
     make_tuple(IMAGE_TSUKUBA,
@@ -44,6 +40,7 @@ INSTANTIATE_TEST_CASE_P(DAISY, DescriptorRotationInvariance, Values(
                DAISY::create(15, 3, 8, 8, DAISY::NRM_NONE, noArray(), true, true),
                0.79f)
 ));
+#ifdef OPENCV_XFEATURES2D_HAS_VGG_DATA
 INSTANTIATE_TEST_CASE_P(VGG120, DescriptorRotationInvariance, Values(
     make_tuple(IMAGE_TSUKUBA,
                KAZE::create(),
@@ -68,7 +65,7 @@ INSTANTIATE_TEST_CASE_P(VGG48, DescriptorRotationInvariance, Values(
                VGG::create(VGG::VGG_48, 1.4f, true, true, 48.0f, false),
                0.97f)
 ));
-
+#endif  // OPENCV_XFEATURES2D_HAS_VGG_DATA
 
 #ifdef OPENCV_ENABLE_NONFREE
 
@@ -100,6 +97,7 @@ INSTANTIATE_TEST_CASE_P(FREAK, DescriptorRotationInvariance, Values(
                0.90f)
 ));
 
+#ifdef OPENCV_XFEATURES2D_HAS_BOOST_DATA
 INSTANTIATE_TEST_CASE_P(BoostDesc_BGM, DescriptorRotationInvariance, Values(
     make_tuple(IMAGE_TSUKUBA,
                SURF::create(),
@@ -148,6 +146,7 @@ INSTANTIATE_TEST_CASE_P(BoostDesc_BINBOOST_256, DescriptorRotationInvariance, Va
                BoostDesc::create(BoostDesc::BINBOOST_256, true, 6.25f),
                0.999f)
 ));
+#endif  // OPENCV_XFEATURES2D_HAS_BOOST_DATA
 #endif
 
 
@@ -159,15 +158,8 @@ INSTANTIATE_TEST_CASE_P(SURF, DetectorScaleInvariance, Values(
     make_tuple(IMAGE_BIKES, SURF::create(), 0.64f, 0.84f)
 ));
 
-INSTANTIATE_TEST_CASE_P(SIFT, DetectorScaleInvariance, Values(
-    make_tuple(IMAGE_BIKES, SIFT::create(), 0.55f, 0.99f)
-));
-
 INSTANTIATE_TEST_CASE_P(SURF, DescriptorScaleInvariance, Values(
     make_tuple(IMAGE_BIKES, SURF::create(), SURF::create(), 0.7f)
-));
-INSTANTIATE_TEST_CASE_P(SIFT, DescriptorScaleInvariance, Values(
-    make_tuple(IMAGE_BIKES, SIFT::create(), SIFT::create(), 0.3f)
 ));
 #endif // NONFREE
 
@@ -181,6 +173,7 @@ INSTANTIATE_TEST_CASE_P(DISABLED_DAISY, DescriptorScaleInvariance, Values(
 ));
 #endif
 
+#ifdef OPENCV_XFEATURES2D_HAS_VGG_DATA
 INSTANTIATE_TEST_CASE_P(VGG120, DescriptorScaleInvariance, Values(
     make_tuple(IMAGE_BIKES,
                KAZE::create(),
@@ -205,8 +198,10 @@ INSTANTIATE_TEST_CASE_P(VGG48, DescriptorScaleInvariance, Values(
                VGG::create(VGG::VGG_48, 1.4f, true, true, 48.0f, false),
                0.93f)
 ));
+#endif  // OPENCV_XFEATURES2D_HAS_VGG_DATA
 
 #ifdef OPENCV_ENABLE_NONFREE  // SURF detector is used in tests
+#ifdef OPENCV_XFEATURES2D_HAS_BOOST_DATA
 INSTANTIATE_TEST_CASE_P(BoostDesc_BGM, DescriptorScaleInvariance, Values(
     make_tuple(IMAGE_BIKES,
                SURF::create(),
@@ -249,6 +244,7 @@ INSTANTIATE_TEST_CASE_P(BoostDesc_BINBOOST_256, DescriptorScaleInvariance, Value
                BoostDesc::create(BoostDesc::BINBOOST_256, true, 6.25f),
                0.98f)
 ));
+#endif  // OPENCV_XFEATURES2D_HAS_BOOST_DATA
 #endif // NONFREE
 
 

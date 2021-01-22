@@ -59,18 +59,15 @@ void _createTexture(const String& name, Mat image)
     TextureManager& texMgr = TextureManager::getSingleton();
     TexturePtr tex = texMgr.getByName(name, RESOURCEGROUP_NAME);
 
-    Image im;
-    im.loadDynamicImage(image.ptr(), image.cols, image.rows, 1, format);
-
-    if (tex)
+    if(!tex)
     {
-        // update
-        PixelBox box = im.getPixelBox();
-        tex->getBuffer()->blitFromMemory(box, box);
-        return;
+        tex = texMgr.createManual(name, RESOURCEGROUP_NAME, TEX_TYPE_2D, image.cols, image.rows,
+                                  MIP_DEFAULT, format);
     }
 
-    texMgr.loadImage(name, RESOURCEGROUP_NAME, im);
+    PixelBox box(image.cols, image.rows, 1, format, image.ptr());
+    box.rowPitch = image.step[0] / PixelUtil::getNumElemBytes(format);
+    tex->getBuffer()->blitFromMemory(box);
 }
 
 static void _convertRT(InputArray rot, InputArray tvec, Quaternion& q, Vector3& t, bool invert = false)
@@ -179,18 +176,21 @@ static ColourValue convertColor(const Scalar& val)
     return ret;
 }
 
+class WindowSceneImpl;
+
 struct Application : public OgreBites::ApplicationContext, public OgreBites::InputListener
 {
     Ptr<LogManager> logMgr;
-    Ogre::SceneManager* sceneMgr;
+    WindowSceneImpl* mainWin;
     Ogre::String title;
     uint32_t w;
     uint32_t h;
     int key_pressed;
     int flags;
+    Ogre::MaterialPtr casterMat;
 
     Application(const Ogre::String& _title, const Size& sz, int _flags)
-        : OgreBites::ApplicationContext("ovis"), sceneMgr(NULL), title(_title), w(sz.width),
+        : OgreBites::ApplicationContext("ovis"), mainWin(NULL), title(_title), w(sz.width),
           h(sz.height), key_pressed(-1), flags(_flags)
     {
         if(utils::getConfigurationParameterBool("OPENCV_OVIS_VERBOSE_LOG", false))
@@ -226,7 +226,7 @@ struct Application : public OgreBites::ApplicationContext, public OgreBites::Inp
                                              NameValuePairList miscParams = NameValuePairList()) CV_OVERRIDE
     {
         Ogre::String _name = name;
-        if (!sceneMgr)
+        if (!mainWin)
         {
             _w = w;
             _h = h;
@@ -288,6 +288,9 @@ struct Application : public OgreBites::ApplicationContext, public OgreBites::Inp
         MaterialManager& matMgr = MaterialManager::getSingleton();
         matMgr.setDefaultTextureFiltering(TFO_ANISOTROPIC);
         matMgr.setDefaultAnisotropy(16);
+        casterMat = matMgr.create("DepthCaster", Ogre::RGN_INTERNAL);
+        casterMat->setLightingEnabled(false);
+        casterMat->setDepthBias(-1, -1);
     }
 };
 
@@ -308,7 +311,7 @@ public:
     WindowSceneImpl(Ptr<Application> app, const String& _title, const Size& sz, int _flags)
         : title(_title), root(app->getRoot()), depthRTT(NULL), flags(_flags)
     {
-        if (!app->sceneMgr)
+        if (!app->mainWin)
         {
             flags |= SCENE_SEPARATE;
         }
@@ -319,12 +322,28 @@ public:
             RTShader::ShaderGenerator& shadergen = RTShader::ShaderGenerator::getSingleton();
             shadergen.addSceneManager(sceneMgr); // must be done before we do anything with the scene
 
+            if (flags & SCENE_SHADOWS)
+            {
+                sceneMgr->setShadowTechnique(SHADOWTYPE_TEXTURE_MODULATIVE_INTEGRATED);
+                sceneMgr->setShadowTexturePixelFormat(PF_DEPTH32);
+                // arbitrary heuristic for shadowmap size
+                sceneMgr->setShadowTextureSize(std::max(sz.width, sz.height) * 2);
+                sceneMgr->setShadowCameraSetup(FocusedShadowCameraSetup::create());
+                sceneMgr->setShadowTextureCasterMaterial(app->casterMat);
+
+                // inject shadowmap into materials
+                const auto& schemeName = RTShader::ShaderGenerator::DEFAULT_SCHEME_NAME;
+                auto rs = shadergen.getRenderState(schemeName);
+                rs->addTemplateSubRenderState(shadergen.createSubRenderState("SGX_IntegratedPSSM3"));
+            }
+
             sceneMgr->setAmbientLight(ColourValue(.1, .1, .1));
             _createBackground();
         }
         else
         {
-            sceneMgr = app->sceneMgr;
+            sceneMgr = app->mainWin->sceneMgr;
+            bgplane = app->mainWin->bgplane;
         }
 
         if(flags & SCENE_SHOW_CS_CROSS)
@@ -346,11 +365,11 @@ public:
             camman->setFixedYaw(false);
         }
 
-        if (!app->sceneMgr)
+        if (!app->mainWin)
         {
             CV_Assert((flags & SCENE_OFFSCREEN) == 0 && "off-screen rendering for main window not supported");
 
-            app->sceneMgr = sceneMgr;
+            app->mainWin = this;
             rWin = app->getRenderWindow();
             if (camman)
                 app->addInputListener(camman.get());
@@ -393,12 +412,16 @@ public:
             }
         }
 
-        if(_app->sceneMgr == sceneMgr && (flags & SCENE_SEPARATE))
+        if(_app->mainWin == this && (flags & SCENE_SEPARATE))
         {
             // this is the root window owning the context
             CV_Assert(_app->numWindows() == 1 && "the first OVIS window must be deleted last");
             _app->closeApp();
             _app.release();
+        }
+        else if (flags & SCENE_OFFSCREEN)
+        {
+            TextureManager::getSingleton().remove(title, RESOURCEGROUP_NAME);
         }
         else
         {
@@ -414,12 +437,11 @@ public:
 
         _createTexture(name, image.getMat());
 
-        // correct for pixel centers
-        Vector2 pc(0.5 / image.cols(), 0.5 / image.rows());
-        bgplane->setUVs(pc, Vector2(pc[0], 1 - pc[1]), Vector2(1 - pc[0], pc[1]), Vector2(1, 1) - pc);
+        bgplane->setDefaultUVs();
 
         Pass* rpass = bgplane->getMaterial()->getBestTechnique()->getPasses()[0];
         rpass->getTextureUnitStates()[0]->setTextureName(name);
+        rpass->getTextureUnitStates()[0]->setTextureAddressingMode(TAM_CLAMP);
 
         // ensure bgplane is visible
         bgplane->setVisible(true);
@@ -544,14 +566,9 @@ public:
     }
 
     Rect2d createCameraEntity(const String& name, InputArray K, const Size& imsize, float zFar,
-                              InputArray tvec, InputArray rot) CV_OVERRIDE
+                              InputArray tvec, InputArray rot, const Scalar& color) CV_OVERRIDE
     {
-        MaterialPtr mat = MaterialManager::getSingleton().create(name, RESOURCEGROUP_NAME);
-        Pass* rpass = mat->getTechniques()[0]->getPasses()[0];
-        rpass->setEmissive(ColourValue::White);
-
         Camera* cam = sceneMgr->createCamera(name);
-        cam->setMaterial(mat);
 
         cam->setVisible(true);
         cam->setDebugDisplayEnabled(true);
@@ -559,6 +576,15 @@ public:
         cam->setFarClipDistance(zFar);
 
         _setCameraIntrinsics(cam, K, imsize);
+
+#if OGRE_VERSION < ((1 << 16) | (12 << 8) | 9)
+        MaterialPtr mat = MaterialManager::getSingleton().create(name, RESOURCEGROUP_NAME);
+        Pass* rpass = mat->getTechniques()[0]->getPasses()[0];
+        rpass->setEmissive(convertColor(color));
+        cam->setMaterial(mat);
+#else
+        cam->setDebugColour(convertColor(color));
+#endif
 
         Quaternion q;
         Vector3 t;
@@ -687,7 +713,7 @@ public:
         frameCtrlrs.erase(animstate);
     }
 
-    void setEntityProperty(const String& name, int prop, const String& value) CV_OVERRIDE
+    void setEntityProperty(const String& name, int prop, const String& value, int subEntityIdx) CV_OVERRIDE
     {
         CV_Assert(prop == ENTITY_MATERIAL);
         SceneNode& node = _getSceneNode(sceneMgr, name);
@@ -695,16 +721,13 @@ public:
         MaterialPtr mat = MaterialManager::getSingleton().getByName(value, RESOURCEGROUP_NAME);
         CV_Assert(mat && "material not found");
 
-        Camera* cam = dynamic_cast<Camera*>(node.getAttachedObject(name));
-        if(cam)
-        {
-            cam->setMaterial(mat);
-            return;
-        }
-
         Entity* ent = dynamic_cast<Entity*>(node.getAttachedObject(name));
         CV_Assert(ent && "invalid entity");
-        ent->setMaterial(mat);
+
+        if (subEntityIdx < 0)
+            ent->setMaterial(mat);
+        else
+            ent->getSubEntities()[subEntityIdx]->setMaterial(mat);
     }
 
     void setEntityProperty(const String& name, int prop, const Scalar& value) CV_OVERRIDE
@@ -712,6 +735,13 @@ public:
         SceneNode& node = _getSceneNode(sceneMgr, name);
         switch(prop)
         {
+        case ENTITY_CAST_SHADOWS:
+        {
+            Entity* ent = dynamic_cast<Entity*>(node.getAttachedObject(name));
+            CV_Assert(ent && "invalid entity");
+            ent->setCastShadows(bool(value[0]));
+            break;
+        }
         case ENTITY_SCALE:
         {
             node.setScale(value[0], value[1], value[2]);
@@ -776,7 +806,7 @@ public:
         bgplane.reset(new Rectangle2D(true));
         bgplane->setCorners(-1.0, 1.0, 1.0, -1.0);
 
-        // correct for pixel centers
+        // use pixel centers. See https://stackoverflow.com/a/37484800/927543
         Vector2 pc(0.5 / img.cols, 0.5 / img.rows);
         bgplane->setUVs(pc, Vector2(pc[0], 1 - pc[1]), Vector2(1 - pc[0], pc[1]), Vector2(1, 1) - pc);
 
@@ -1004,13 +1034,16 @@ void setMaterialProperty(const String& name, int prop, const Scalar& val)
         CV_Error(Error::StsBadArg, "invalid or non Scalar property");
         break;
     }
+    RTShader::ShaderGenerator::getSingleton().invalidateMaterial(
+        RTShader::ShaderGenerator::DEFAULT_SCHEME_NAME, name, RESOURCEGROUP_NAME);
 }
 
-void setMaterialProperty(const String& name, int prop, const String& value)
+static TextureUnitState* _getTextureUnitForUpdate(const String& material, int prop)
 {
     CV_Assert_N(prop >= MATERIAL_TEXTURE0, prop <= MATERIAL_TEXTURE3, _app);
 
-    MaterialPtr mat = MaterialManager::getSingleton().getByName(name, RESOURCEGROUP_NAME);
+    CV_Assert(_app);
+    auto mat = MaterialManager::getSingleton().getByName(material, RESOURCEGROUP_NAME);
     CV_Assert(mat);
 
     Pass* rpass = mat->getTechniques()[0]->getPasses()[0];
@@ -1018,13 +1051,32 @@ void setMaterialProperty(const String& name, int prop, const String& value)
     size_t texUnit = prop - MATERIAL_TEXTURE0;
     CV_Assert(texUnit <= rpass->getTextureUnitStates().size());
 
+    RTShader::ShaderGenerator::getSingleton().invalidateMaterial(
+        RTShader::ShaderGenerator::DEFAULT_SCHEME_NAME, material, RESOURCEGROUP_NAME);
+
     if (rpass->getTextureUnitStates().size() <= texUnit)
     {
-        rpass->createTextureUnitState(value);
-        return;
+        return rpass->createTextureUnitState();
     }
 
-    rpass->getTextureUnitStates()[texUnit]->setTextureName(value);
+    return rpass->getTextureUnitStates()[texUnit];
+}
+
+void setMaterialProperty(const String& name, int prop, const String& value)
+{
+    auto tu = _getTextureUnitForUpdate(name, prop);
+    tu->setTextureName(value);
+}
+
+void setMaterialProperty(const String& name, int prop, InputArray value)
+{
+    auto tu = _getTextureUnitForUpdate(name, prop);
+
+    auto texName = tu->getTextureName();
+    if(texName.empty()) texName = name;
+
+    _createTexture(texName, value.getMat());
+    tu->setTextureName(texName);
 }
 
 static bool setShaderProperty(const GpuProgramParametersSharedPtr& params, const String& prop,
